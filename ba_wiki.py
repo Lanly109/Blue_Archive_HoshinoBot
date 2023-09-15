@@ -1,5 +1,7 @@
 import base64
 import os
+import json
+import datetime
 
 import hoshino
 import hashlib
@@ -12,12 +14,59 @@ base_path = "bluearchive/wiki/"
 arona_url = "https://arona.diyigemt.com/api/v1/image"
 arona_img_url = "https://arona.cdn.diyigemt.com/image"
 base_url = "https://ba.gamekee.com/v1/content/detail/"
+battle_url = "http://ba.gamerhub.cn/api/get_ba_raid_ranking_data?season={}&ranking=1,2001,20001,30001"
+battle_season_file = "current_battle_season.json"
 
 urls = {
     "cn_pools": "596691",
     "global_pools": "150045",
 }
 
+if not os.path.exists(battle_season_file):
+    battle_season = {}
+else:
+    with open(battle_season_file, "r") as f:
+        battle_season = json.load(f);
+
+def get_battle_score(result, ranks):
+    msg = ''
+    for rank in ranks:
+        score = next((item[1] for item in reversed(result[str(rank)]) if item[1] is not None), None)
+        msg += f'第{rank}名: \t{score}\n'
+    return msg.strip()
+
+server_list = ['cn', 'jp', 'global']
+
+@sv.on_prefix(("ba总力战"))
+async def set_battle_score(bot, ev):
+    cmd = ev.message.extract_plain_text().strip().split()
+    server = cmd[0]
+    season = cmd[1]
+    if server not in server_list:
+        await bot.finish(ev, f"未知的服务器{server}，支持{' '.join(server_list)}")
+    battle_season[server] = season
+    with open(battle_season_file, "w") as f:
+        f.write(json.dumps(battle_season))
+    await bot.finish(ev, f"{server}切换为第{season}期")
+
+@sv.on_prefix(("ba档线"))
+async def send_battle_score(bot, ev):
+    server = ev.message.extract_plain_text().strip() or 'cn'
+    if server not in server_list:
+        await bot.finish(ev, f"未知的服务器{server}，支持{' '.join(server_list)}")
+    if server not in battle_season:
+        await bot.finish(ev, "请先发送[ba总力战 {server} 3]设置总力战档期")
+    url = battle_url.format(battle_season[server])
+    text = f"蔚蓝档案{server}服 第{battle_season[server]}期\n"
+    try:
+        res = await (await aiorequests.get(url)).json()
+        text += f'官服:{datetime.datetime.fromtimestamp(res["lastUpdatedTime"])}\n' + get_battle_score(res['data'], [1, 2001, 20001]) + '\n\n'
+        text += f'B服:{datetime.datetime.fromtimestamp(res["lastUpdatedTime_bilibili"])}\n' + get_battle_score(res['data_bilibili'], [1, 1001, 8001])
+    except Exception as e:
+        sv.logger.error(str(e))
+        text += f"获取档线失败:{str(e)}"
+
+    await bot.finish(ev, text)
 
 async def im2base64str(img_url):
     img = await aiorequests.get(img_url, timeout=5)
